@@ -1,0 +1,83 @@
+spring:
+  application:
+    name: narturebelle-providers
+  profiles:
+    active: default
+
+  # The same Supabase database as NB-Ecom-API. No defaults on purpose: fail fast if env vars are missing.
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 3
+
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    open-in-view: false
+
+  # Flyway touches only this service's schema, with its own history table. NB-Ecom-API alone
+  # migrates public, so the two services never compete over one migration history.
+  flyway:
+    schemas: provider_onboarding
+    default-schema: provider_onboarding
+
+  # Document uploads. ApplicationDocumentService re-checks the 4 MB cap and the file type.
+  # Kept under Vercel's 4.5 MB request-body limit, so an oversized file gets our 413, not Vercel's.
+  servlet:
+    multipart:
+      max-file-size: 4MB
+      max-request-size: 4400KB
+
+server:
+  # The Docker image sets PORT=80, the port Vercel's Container runtime routes to by default.
+  port: ${PORT:8086}
+  forward-headers-strategy: native
+  tomcat:
+    max-swallow-size: 10MB
+
+cors:
+  # Add Vercel preview domains through CORS_ALLOWED_ORIGINS.
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:https://narturebelle.com,https://www.narturebelle.com,https://stage-narturebelle.com,http://localhost:*}
+
+firebase:
+  service-account-base64: ${FIREBASE_SERVICE_ACCOUNT_BASE64:}
+  credentials:
+    path: classpath:firebase-service-account.json
+
+email:
+  from: ${EMAIL_FROM:NartureBelle <no-reply@narturebelle.com>}
+  resend:
+    api-key: ${RESEND_API_KEY:}
+
+# Encrypts PAN and bank account numbers (AES-256-GCM). Base64 of 32 random bytes. No default on purpose.
+data:
+  encryption-key: ${DATA_ENCRYPTION_KEY}
+
+onboarding:
+  # Firebase must report a verified email AND a verified phone before an application can be submitted.
+  require-phone-verification: ${REQUIRE_PHONE_VERIFICATION:true}
+  # Off in prod until the real fixed fees, agreement and training text are in place (see application-prod.yml).
+  agreement-signing-enabled: ${AGREEMENT_SIGNING_ENABLED:true}
+  # The approved time periods.
+  reapply-after-months: 6
+  draft-first-reminder-days: 3
+  draft-second-reminder-days: 14
+  draft-delete-days: 90
+  changes-close-days: 30
+  recheck-after-days: 60
+  licence-reminder-days: 60,30,7
+  retention-months: 12
+
+narturebelle:
+  scheduling:
+    enabled: ${SCHEDULING_ENABLED:true}
+
+logging:
+  level:
+    root: INFO
+    com.narturebelle: INFO

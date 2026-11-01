@@ -1,0 +1,15 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+
+# Real professionals must not sign the DRAFT agreement or the placeholder fee. Set this to true only once
+# payout_rates holds the real fixed fees and AgreementCatalog/TrainingCatalog hold the final legal text.
+onboarding:
+  agreement-signing-enabled: ${AGREEMENT_SIGNING_ENABLED:false}
+
+logging:
+  level:
+    root: WARN
+    com.narturebelle: INFO

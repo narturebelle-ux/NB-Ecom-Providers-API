@@ -39,3 +39,9 @@ out/
 ### JVM crash logs ###
 hs_err_pid*
 replay_pid*
+
+### Secrets ###
+*.env
+.env.*
+!.env.example
+*firebase-service-account*.json

@@ -1,0 +1,102 @@
+package com.narturebelle.providers.security;
+
+import com.narturebelle.providers.model.Role;
+import com.narturebelle.providers.model.shared.SharedUser;
+import com.narturebelle.providers.repository.SharedUserRepository;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.TransactionException;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+
+/**
+ * Verifies the Authorization: Bearer <Firebase ID token> header on every request via the injected
+ * FirebaseTokenVerifier (swappable in tests) and, when present and valid, populates the
+ * SecurityContext with a FirebaseUserPrincipal. Absent/invalid tokens leave the request anonymous —
+ * the SecurityFilterChain's matchers decide whether that's allowed (permitAll) or rejected
+ * (401 via RestAuthenticationEntryPoint). Dev-bypass behavior lives in DefaultFirebaseTokenVerifier,
+ * not here, so swapping in a test/mock verifier always takes full control of authentication.
+ */
+@Component
+public class FirebaseAuthenticationFilter extends OncePerRequestFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(FirebaseAuthenticationFilter.class);
+
+    private final FirebaseTokenVerifier tokenVerifier;
+    private final SharedUserRepository userRepository;
+
+    public FirebaseAuthenticationFilter(FirebaseTokenVerifier tokenVerifier, SharedUserRepository userRepository) {
+        this.tokenVerifier = tokenVerifier;
+        this.userRepository = userRepository;
+    }
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
+        String header = request.getHeader("Authorization");
+
+        if (header != null && header.startsWith("Bearer ")) {
+            String token = header.substring(7).trim();
+            if (!token.isEmpty()) {
+                try {
+                    authenticate(token);
+                } catch (DataAccessException | TransactionException e) {
+                    // The token may be fine: reporting this as 401 would tell the UI the person is signed out.
+                    log.error("Could not load the signed-in user", e);
+                    response.setStatus(HttpServletResponse.SC_SERVICE_UNAVAILABLE);
+                    response.setContentType("application/json");
+                    response.getWriter().write("{\"code\":\"SERVICE_UNAVAILABLE\",\"message\":\"Please try again in a moment.\"}");
+                    return;
+                }
+            }
+        }
+
+        filterChain.doFilter(request, response);
+    }
+
+    private void authenticate(String token) {
+        VerifiedFirebaseToken verified;
+        try {
+            verified = tokenVerifier.verify(token);
+        } catch (Exception e) {
+            log.debug("Firebase token verification failed: {}", e.getMessage());
+            SecurityContextHolder.clearContext();
+            return;
+        }
+        Optional<SharedUser> dbUser = userRepository.findByFirebaseUid(verified.uid());
+        Long userId = dbUser.map(SharedUser::getId).orElse(null);
+        Set<Role> roles = dbUser.map(SharedUser::getRoles)
+                .filter(r -> !r.isEmpty())
+                .orElse(Set.of(Role.MOTHER));
+
+        FirebaseUserPrincipal principal = new FirebaseUserPrincipal(
+                userId, verified.uid(), verified.email(), verified.emailVerified(),
+                verified.phone(), verified.phone() != null, roles, verified.name()
+        );
+
+        List<GrantedAuthority> authorities = new ArrayList<>();
+        for (Role role : roles) {
+            authorities.add(new SimpleGrantedAuthority("ROLE_" + role.name()));
+        }
+        if (principal.isVerified()) {
+            authorities.add(new SimpleGrantedAuthority("VERIFIED"));
+        }
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(principal, null, authorities));
+    }
+}
